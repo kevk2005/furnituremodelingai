@@ -9,7 +9,7 @@ interface Props {
   catalogIndex: Record<string, CatalogItem>;
 }
 
-enum Mode { NONE, DRAG, ORBIT }
+enum Mode { NONE, DRAG }
 
 export const SceneCanvas: React.FC<Props> = ({ roomImage, placements, onUpdate, catalogIndex }) => {
   const mountRef = useRef<HTMLDivElement | null>(null);
@@ -17,7 +17,6 @@ export const SceneCanvas: React.FC<Props> = ({ roomImage, placements, onUpdate, 
     scene: THREE.Scene;
     camera: THREE.PerspectiveCamera;
     renderer: THREE.WebGLRenderer;
-    backdrop?: THREE.Mesh;
     items: Map<string, THREE.Mesh>;
   } | null>(null);
   
@@ -25,7 +24,6 @@ export const SceneCanvas: React.FC<Props> = ({ roomImage, placements, onUpdate, 
   const mouse = useRef(new THREE.Vector2());
   const [mode, setMode] = useState(Mode.NONE);
   const [selectedId, setSelectedId] = useState<string | null>(null);
-  const orbitState = useRef({ isDragging: false, prevX: 0, prevY: 0 });
   const plane = useRef(new THREE.Plane(new THREE.Vector3(0, 1, 0), 0));
 
   // Initialize Three.js scene once
@@ -33,32 +31,43 @@ export const SceneCanvas: React.FC<Props> = ({ roomImage, placements, onUpdate, 
     if (!mountRef.current || threeRef.current) return;
     
     const scene = new THREE.Scene();
-    scene.background = new THREE.Color('#1a1a1a');
+    // No background color - will be handled by CSS or transparent
 
     const camera = new THREE.PerspectiveCamera(
-      50,
+      60,
       mountRef.current.clientWidth / mountRef.current.clientHeight,
       0.1,
       100
     );
-    camera.position.set(8, 6, 10);
-    camera.lookAt(0, 0, 0);
+    // Camera positioned to view scene from typical room photo perspective
+    camera.position.set(0, 1.6, 5); // Eye level ~1.6m, looking forward
+    camera.lookAt(0, 0.8, 0);
 
-    const renderer = new THREE.WebGLRenderer({ antialias: true });
+    const renderer = new THREE.WebGLRenderer({ 
+      antialias: true, 
+      alpha: true // Enable transparency
+    });
     renderer.setSize(mountRef.current.clientWidth, mountRef.current.clientHeight);
     mountRef.current.appendChild(renderer.domElement);
 
     // Lighting
-    scene.add(new THREE.AmbientLight(0xffffff, 0.6));
-    const dir = new THREE.DirectionalLight(0xffffff, 0.8);
+    scene.add(new THREE.AmbientLight(0xffffff, 0.8));
+    const dir = new THREE.DirectionalLight(0xffffff, 0.6);
     dir.position.set(5, 10, 7);
     dir.castShadow = true;
     scene.add(dir);
 
-    // Grid floor (3D printer style)
-    const grid = new THREE.GridHelper(20, 40, 0x555555, 0x333333);
-    grid.position.y = 0;
-    scene.add(grid);
+    // Invisible floor plane for raycasting (furniture placement)
+    const floorGeo = new THREE.PlaneGeometry(20, 20);
+    const floorMat = new THREE.MeshBasicMaterial({ 
+      visible: false, // Invisible but still raycastable
+      side: THREE.DoubleSide 
+    });
+    const floor = new THREE.Mesh(floorGeo, floorMat);
+    floor.rotateX(-Math.PI / 2);
+    floor.position.y = 0;
+    floor.name = 'floor';
+    scene.add(floor);
 
     // Resize handler
     const handleResize = () => {
@@ -90,48 +99,22 @@ export const SceneCanvas: React.FC<Props> = ({ roomImage, placements, onUpdate, 
     };
   }, []);
 
-  // Photo backdrop
+  // Photo backdrop - render as CSS background layer behind canvas
   useEffect(() => {
-    if (!threeRef.current) return;
-    const { scene } = threeRef.current;
+    if (!mountRef.current) return;
+    const container = mountRef.current.parentElement;
+    if (!container) return;
 
-    // Remove old backdrop
-    if (threeRef.current.backdrop) {
-      scene.remove(threeRef.current.backdrop);
-      threeRef.current.backdrop.geometry.dispose();
-      (threeRef.current.backdrop.material as THREE.Material).dispose();
-      threeRef.current.backdrop = undefined;
+    if (roomImage) {
+      container.style.backgroundImage = `url(${roomImage})`;
+      container.style.backgroundSize = 'cover';
+      container.style.backgroundPosition = 'center';
+      container.style.backgroundRepeat = 'no-repeat';
+      console.log('[SceneCanvas] Room image set as background');
+    } else {
+      container.style.backgroundImage = 'none';
+      container.style.backgroundColor = '#1a1a1a';
     }
-
-    if (!roomImage) return;
-
-    console.log('[SceneCanvas] Loading backdrop image...');
-    const texLoader = new THREE.TextureLoader();
-    texLoader.load(
-      roomImage, 
-      (texture: THREE.Texture) => {
-        if (!threeRef.current) return;
-        const img = texture.image as HTMLImageElement;
-        console.log('[SceneCanvas] Backdrop loaded, size:', img.width, 'x', img.height);
-        const aspect = img.width / img.height;
-        const HEIGHT = 8;
-        const WIDTH = HEIGHT * aspect;
-
-        const geo = new THREE.PlaneGeometry(WIDTH, HEIGHT);
-        const mat = new THREE.MeshBasicMaterial({ map: texture, side: THREE.DoubleSide });
-        const plane = new THREE.Mesh(geo, mat);
-
-        // Position backdrop behind grid
-        plane.position.set(0, HEIGHT / 2, -6);
-        threeRef.current.scene.add(plane);
-        threeRef.current.backdrop = plane;
-        console.log('[SceneCanvas] Backdrop added to scene at position', plane.position);
-      },
-      undefined,
-      (error) => {
-        console.error('[SceneCanvas] Failed to load backdrop:', error);
-      }
-    );
   }, [roomImage]);
 
   // Furniture meshes sync
@@ -154,9 +137,17 @@ export const SceneCanvas: React.FC<Props> = ({ roomImage, placements, onUpdate, 
       let mesh = items.get(pl.id);
       if (!mesh) {
         const item = catalogIndex[pl.itemId];
-        const color = item?.color || '#6699ff';
-        const geo = new THREE.BoxGeometry(1, 1, 1);
-        const mat = new THREE.MeshStandardMaterial({ color });
+        const color = item?.color || '#8b4513';
+        // Use real dimensions if available (convert cm to meters)
+        const w = (item?.width || 50) / 100;
+        const d = (item?.depth || 50) / 100;
+        const h = (item?.height || 90) / 100;
+        const geo = new THREE.BoxGeometry(w, h, d);
+        const mat = new THREE.MeshStandardMaterial({ 
+          color,
+          roughness: 0.7,
+          metalness: 0.1
+        });
         mesh = new THREE.Mesh(geo, mat);
         mesh.castShadow = true;
         mesh.receiveShadow = true;
@@ -164,7 +155,9 @@ export const SceneCanvas: React.FC<Props> = ({ roomImage, placements, onUpdate, 
         scene.add(mesh);
         items.set(pl.id, mesh);
       }
-      mesh.position.set(pl.position[0], pl.position[1], pl.position[2]);
+      // Position with Y offset = half height so furniture sits on floor
+      const h = (mesh.geometry as THREE.BoxGeometry).parameters.height;
+      mesh.position.set(pl.position[0], h / 2 * pl.scale, pl.position[2]);
       mesh.scale.setScalar(pl.scale);
       mesh.rotation.y = pl.rotationY;
     });
@@ -188,10 +181,9 @@ export const SceneCanvas: React.FC<Props> = ({ roomImage, placements, onUpdate, 
       const hitId = intersects[0].object.userData.placementId;
       setSelectedId(hitId);
       setMode(Mode.DRAG);
-    } else if (e.button === 0) {
-      // Start orbit on empty space
-      setMode(Mode.ORBIT);
-      orbitState.current = { isDragging: true, prevX: e.clientX, prevY: e.clientY };
+    } else {
+      setSelectedId(null);
+      setMode(Mode.NONE);
     }
   }
 
@@ -203,31 +195,21 @@ export const SceneCanvas: React.FC<Props> = ({ roomImage, placements, onUpdate, 
       mouse.current.x = ((e.clientX - rect.left) / rect.width) * 2 - 1;
       mouse.current.y = -((e.clientY - rect.top) / rect.height) * 2 + 1;
       raycaster.current.setFromCamera(mouse.current, threeRef.current.camera);
-      const intersect = raycaster.current.ray.intersectPlane(plane.current, new THREE.Vector3());
-      if (intersect) {
-        updatePlacement(selectedId, { position: [intersect.x, 0.5, intersect.z] });
-      }
-    } else if (mode === Mode.ORBIT && orbitState.current.isDragging) {
-      const deltaX = e.clientX - orbitState.current.prevX;
-      const deltaY = e.clientY - orbitState.current.prevY;
-      orbitState.current.prevX = e.clientX;
-      orbitState.current.prevY = e.clientY;
-
-      const camera = threeRef.current.camera;
-      const pivot = new THREE.Vector3(0, 2, 0);
       
-      // Horizontal orbit
-      const angle = -deltaX * 0.005;
-      const offset = camera.position.clone().sub(pivot);
-      offset.applyAxisAngle(new THREE.Vector3(0, 1, 0), angle);
-      camera.position.copy(pivot.clone().add(offset));
-      camera.lookAt(pivot);
+      // Raycast to invisible floor to get placement position
+      const floor = threeRef.current.scene.getObjectByName('floor');
+      if (floor) {
+        const intersects = raycaster.current.intersectObject(floor);
+        if (intersects.length > 0) {
+          const point = intersects[0].point;
+          updatePlacement(selectedId, { position: [point.x, point.y, point.z] });
+        }
+      }
     }
   }
 
   function onPointerUp() {
     setMode(Mode.NONE);
-    orbitState.current.isDragging = false;
   }
 
   function handleRotate(delta: number) {
@@ -252,7 +234,7 @@ export const SceneCanvas: React.FC<Props> = ({ roomImage, placements, onUpdate, 
         style={{ 
           width: '100%', 
           height: '100%', 
-          cursor: mode === Mode.DRAG ? 'grabbing' : mode === Mode.ORBIT ? 'move' : 'default'
+          cursor: mode === Mode.DRAG ? 'grabbing' : 'default'
         }}
         onPointerDown={onPointerDown}
         onPointerMove={onPointerMove}
@@ -263,20 +245,22 @@ export const SceneCanvas: React.FC<Props> = ({ roomImage, placements, onUpdate, 
           position: 'absolute', 
           top: 10, 
           right: 10, 
-          background: '#222', 
+          background: 'rgba(0,0,0,0.85)', 
           color: '#fff', 
-          padding: '8px 12px', 
-          borderRadius: 6, 
-          fontSize: 12,
-          boxShadow: '0 2px 8px rgba(0,0,0,0.3)'
+          padding: '12px 16px', 
+          borderRadius: 8, 
+          fontSize: 13,
+          boxShadow: '0 4px 12px rgba(0,0,0,0.4)',
+          backdropFilter: 'blur(8px)'
         }}>
-          <div style={{ marginBottom: 6, fontWeight: 600 }}>Selected: {selectedId.split('-')[0]}</div>
-          <div style={{ display: 'flex', gap: 4, flexWrap: 'wrap' }}>
-            <button onClick={() => handleRotate(0.2)}>↻ +</button>
-            <button onClick={() => handleRotate(-0.2)}>↺ -</button>
-            <button onClick={() => handleScale(1.1)}>+ Scale</button>
-            <button onClick={() => handleScale(0.9)}>- Scale</button>
-            <button onClick={() => { onUpdate(placements.filter((p: FurniturePlacement) => p.id !== selectedId)); setSelectedId(null); }}>✕ Remove</button>
+          <div style={{ marginBottom: 8, fontWeight: 600 }}>
+            {catalogIndex[placements.find((p: FurniturePlacement) => p.id === selectedId)?.itemId || '']?.name || 'Item'}
+          </div>
+          <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap' }}>
+            <button style={{ padding: '4px 10px', fontSize: 12 }} onClick={() => handleRotate(0.2)}>↻ Rotate</button>
+            <button style={{ padding: '4px 10px', fontSize: 12 }} onClick={() => handleScale(1.15)}>+ Bigger</button>
+            <button style={{ padding: '4px 10px', fontSize: 12 }} onClick={() => handleScale(0.85)}>- Smaller</button>
+            <button style={{ padding: '4px 10px', fontSize: 12, background: '#d32f2f', border: 'none', color: '#fff', cursor: 'pointer' }} onClick={() => { onUpdate(placements.filter((p: FurniturePlacement) => p.id !== selectedId)); setSelectedId(null); }}>Remove</button>
           </div>
         </div>
       )}
