@@ -13,7 +13,7 @@ export const CatalogPanel: React.FC<Props> = ({ onAdd }) => {
       {MOCK_CATALOG.map(item => (
         <div key={item.id} className="catalog-item">
           <h4>{item.name}</h4>
-          <div style={{ fontSize: '11px', opacity: 0.8 }}>W {item.width} × D {item.depth} × H {item.height} cm</div>
+          <div style={{ fontSize: '11px', opacity: 0.8 }}>{item.width} × {item.height} px</div>
           <button style={{ marginTop: 4 }} onClick={() => onAdd(item)}>Add</button>
         </div>
       ))}

@@ -39,8 +39,8 @@ const App: React.FC = () => {
     const placement: FurniturePlacement = {
       id: `${item.id}-${Date.now()}`,
       itemId: item.id,
-      position: [0, 0.5, 0],
-      rotationY: 0,
+      position: [400, 300, 0], // Center of typical screen (will be pixel coordinates)
+      rotationY: 0, // degrees
       scale: 1,
     };
     setScene((s: SceneState) => ({ ...s, placements: [...s.placements, placement] }));
@@ -136,4 +136,5 @@ const App: React.FC = () => {
   );
 };
 
+export { App };
 export default App;
