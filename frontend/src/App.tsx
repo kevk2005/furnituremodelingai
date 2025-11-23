@@ -23,6 +23,7 @@ function saveState(state: SceneState) {
 
 const App: React.FC = () => {
   const [scene, setScene] = useState<SceneState>(() => loadState());
+  const [isRendered, setIsRendered] = useState(false);
 
   useEffect(() => {
     saveState(scene);
@@ -30,6 +31,7 @@ const App: React.FC = () => {
 
   function handleImage(dataUrl: string) {
     setScene((s: SceneState) => ({ ...s, roomImageDataUrl: dataUrl }));
+    setIsRendered(false); // Reset render state when new image uploaded
     console.log('[analytics] upload');
   }
 
@@ -50,6 +52,19 @@ const App: React.FC = () => {
     console.log('[analytics] update placements');
   }
 
+  function handleRender() {
+    if (!scene.roomImageDataUrl) {
+      alert('Please upload a room photo first!');
+      return;
+    }
+    if (scene.placements.length === 0) {
+      alert('Please add at least one furniture item!');
+      return;
+    }
+    setIsRendered(true);
+    console.log('[analytics] render');
+  }
+
   const catalogIndex = useMemo(() => {
     const map: Record<string, CatalogItem> = {};
     MOCK_CATALOG.forEach(i => { map[i.id] = i; });
@@ -67,12 +82,49 @@ const App: React.FC = () => {
           <hr />
           <CatalogPanel onAdd={handleAdd} />
           <hr />
+          {scene.placements.length > 0 && scene.roomImageDataUrl && !isRendered && (
+            <button 
+              onClick={handleRender}
+              style={{ 
+                width: '100%', 
+                padding: '12px', 
+                background: '#4CAF50', 
+                color: '#fff', 
+                border: 'none', 
+                borderRadius: 6, 
+                fontSize: 14,
+                fontWeight: 600,
+                cursor: 'pointer',
+                marginBottom: 8
+              }}
+            >
+              🎨 Render in Room
+            </button>
+          )}
+          {isRendered && (
+            <button 
+              onClick={() => setIsRendered(false)}
+              style={{ 
+                width: '100%', 
+                padding: '10px', 
+                background: '#ff9800', 
+                color: '#fff', 
+                border: 'none', 
+                borderRadius: 6, 
+                fontSize: 13,
+                cursor: 'pointer',
+                marginBottom: 8
+              }}
+            >
+              ✏️ Edit Layout
+            </button>
+          )}
           <p style={{ fontSize: 11, opacity: 0.7 }}>Data stored locally (no backend). Mock catalog + simple scene placement only.</p>
-          <button onClick={() => setScene({ placements: [] })}>Reset Scene</button>
+          <button onClick={() => { setScene({ placements: [] }); setIsRendered(false); }}>Reset Scene</button>
         </div>
         <div className="canvas-wrap">
           <SceneCanvas
-            roomImage={scene.roomImageDataUrl}
+            roomImage={isRendered ? scene.roomImageDataUrl : undefined}
             placements={scene.placements}
             onUpdate={handleUpdate}
             catalogIndex={catalogIndex}
